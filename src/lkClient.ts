@@ -117,7 +117,11 @@ export async function listModels(): Promise<string[]> {
 export async function streamChat(
   messages: Array<{ role: string; content: string }>,
   model: string,
-  onToken: (t: string) => void
+  onToken: (t: string) => void,
+  // The server has always sent this; this client used to drop it on the floor,
+  // so a VS Code user saw an answer with no trust signal while the web app
+  // showed one for the same answer.
+  onTrust?: (line: string) => void
 ): Promise<void> {
   const auth = readAuth();
   if (!auth?.id_token) throw new Error('Not logged in. Run: sage login');
@@ -144,8 +148,38 @@ export async function streamChat(
       try {
         const p = JSON.parse(chunk);
         if (p.token) onToken(p.token);
+        else if (p.confidence || p.self_test) onTrust?.(formatTrustLine(p));
         else if (p.done) return;
       } catch { /* non-JSON chunk */ }
     }
   }
+}
+
+/**
+ * One line stating how confident a result is, and whether it was tested.
+ *
+ * MIRRORS sage/core/task_confidence.py::format_trust_line, deliberately word
+ * for word. The same answer is rendered by the web app, the mobile apps, the
+ * CLI and nine editor integrations; when each phrased this for itself the
+ * product said different things about the same result. If the wording changes
+ * there it changes here.
+ *
+ * The "not run" case is printed rather than omitted: a missing line reads as
+ * "no problems found", and that silence is how an ungraded answer passes for a
+ * graded one. The percentage is floored, so the number can never contradict
+ * the label sitting beside it.
+ */
+export function formatTrustLine(p: {
+  confidence?: { label?: string; score?: number } | null;
+  self_test?: { ran?: boolean; passed?: boolean } | null;
+  sources?: unknown[] | null;
+}): string {
+  const label = p.confidence?.label ?? 'unknown';
+  const score = Number(p.confidence?.score ?? 0) || 0;
+  const pct = Math.floor(score * 100);
+  const st = p.self_test;
+  const tested = !st?.ran ? 'not run' : st.passed ? 'passed' : 'FAILED';
+  const n = p.sources?.length ?? 0;
+  const src = n ? ` \u00b7 ${n} source${n === 1 ? '' : 's'}` : '';
+  return `Confidence: ${label} (${pct}%) \u00b7 self-test: ${tested}${src}`;
 }

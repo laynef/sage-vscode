@@ -37,10 +37,23 @@ export class ChatPanel {
     let reply = '';
     this._post({ type: 'streaming_start', model });
     try {
-      await streamChat(this._history, model, (token) => {
-        reply += token;
-        this._post({ type: 'token', token });
-      });
+      await streamChat(
+        this._history,
+        model,
+        (token) => {
+          reply += token;
+          this._post({ type: 'token', token });
+        },
+        // Rendered as trailing tokens rather than a new webview message type:
+        // the existing 'token' handler already appends to the reply, so the
+        // trust line needs no change to the webview HTML and cannot be lost to
+        // a handler that was never written for it.
+        (trustLine) => {
+          const block = `\n\n${trustLine}`;
+          reply += block;
+          this._post({ type: 'token', token: block });
+        }
+      );
     } catch (e: any) {
       reply = `Error: ${e.message}`;
     }
